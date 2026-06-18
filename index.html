@@ -49,6 +49,19 @@
 
   <!-- Recuadros Principales -->
   <div class="dashboard-grid main-metrics">
+    <div id="permisivo-card-colbun" class="metric-card" style="background: linear-gradient(135deg, #10b981, #059669);">
+      <!-- Icono Key (Permiso) -->
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 2l-2 2m-7 7L2 22l10-10L22 2z"/>
+        <path d="M15 7l-1.5-1.5"/>
+        <path d="M18 10l-1.5-1.5"/>
+      </svg>
+      <h3 class="metric-title">Permisivo Colbun</h3>
+      <div id="permisivo-status-colbun" class="status-indicator status-unknown">
+        <span class="item-status-led"></span>
+        <span class="status-text">Esperando...</span>
+      </div>
+    </div>
     <div id="topic1-cell" class="metric-card" style="background: linear-gradient(135deg, #64748b, #334155);">
       <!-- Icono Pickaxe (Minería/Extracción) -->
       <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -70,19 +83,6 @@
         </div>
       </div>
     </div>
-    <div id="topic2-cell" class="metric-card" style="background: linear-gradient(135deg, #f59e0b, #b45309); color: #fff;">
-      <!-- Icono Layers (Acumulación de Sólidos) -->
-      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #fff; opacity: 0.2;">
-        <polygon points="12 2 2 7 12 12 22 7 12 2"/>
-        <polyline points="2 17 12 22 22 17"/>
-        <polyline points="2 12 12 17 22 12"/>
-      </svg>
-      <h3 class="metric-title">Total Acumulado</h3>
-      <div id="topic2Loader" class="loader" style="display: block; border-color: rgba(255,255,255,0.2); border-top-color: #fff;"></div>
-      <div id="topic2Content" style="display: none;">
-        <div id="topic2" class="metric-value">-- <span class="metric-unit">Ton</span></div>
-      </div>
-    </div>
     <div id="last-peak-cell" class="metric-card" style="background: linear-gradient(135deg, #ea580c, #9a3412);">
       <!-- Icono Hard Hat (Gestión de Turno) -->
       <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -96,30 +96,17 @@
         <div id="lastPeakDate" class="metric-value" style="font-size: 1.1rem; margin-top: 5px; font-weight: 400;">--</div>
       </div>
     </div>
-    <div id="topic8-cell" class="metric-card" style="background: linear-gradient(135deg, #475569, #0f172a);">
-      <!-- Icono Cog (Drive/Motor de Cinta) -->
-      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-      <h3 class="metric-title">Velocidad Cinta</h3>
-      <div id="topic8Loader" class="loader" style="display: block; border-color: rgba(255,255,255,0.2); border-top-color: #fff;"></div>
-      <div id="topic8Content" style="display: none;">
-        <div id="velocidadCintaValue" class="metric-value" style="font-size: 2.5rem;">-- <span class="metric-unit">m/s</span></div>
-        <div id="velocidadCintaDetails" class="metric-value" style="font-size: 1.2rem; margin-top: 5px;">Frecuencia: -- <span class="metric-unit">Hz</span></div>
-      </div>
-    </div>
-    <div id="downtime-cell" class="metric-card" style="background: linear-gradient(135deg, #334155, #0f172a);">
+    <div id="workingHours-cell" class="metric-card" style="background: linear-gradient(135deg, #334155, #0f172a);">
       <!-- Icono Timer (Reloj/Tiempo muerto) -->
       <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10"/>
         <polyline points="12 6 12 12 16 14"/>
       </svg>
-      <h3 class="metric-title">Tiempo de Detención</h3>
-      <div id="downtimeLoader" class="loader" style="display: block; border-color: rgba(255,255,255,0.2); border-top-color: #fff;"></div>
-      <div id="downtimeContent" style="display: none;">
-        <div id="downtimeValue" class="metric-value">00:00:00</div>
-        <div class="metric-unit" style="margin-top: 5px; opacity: 0.7;">Acumulado en Turno</div>
+      <h3 class="metric-title">Horas Trabajadas</h3>
+      <div id="workingHoursLoader" class="loader" style="display: block; border-color: rgba(255,255,255,0.2); border-top-color: #fff;"></div>
+      <div id="workingHoursContent" style="display: none;">
+        <div id="workingHoursValue" class="metric-value">00:00</div>
+        <div class="metric-unit" style="margin-top: 5px; opacity: 0.7;">HH:MM</div>
       </div>
     </div>
     <div id="topic3-cell" class="metric-card master-control">
@@ -224,6 +211,21 @@
 
   <!-- Alertas -->
   <div id="alertContainer">⚠️ Alerta: Valor alto detectado!</div>
+
+  <!-- Nueva Sección de Rendimiento -->
+  <div class="main-chart-wrapper" style="margin-top: 20px; display: flex; flex-wrap: wrap; gap: 20px;">
+    <div style="flex: 2; min-width: 300px;">
+      <h2 class="chart-title">Comparativa: Producción vs Tiempo</h2>
+      <div class="chart-box-container" style="height: 300px;">
+        <canvas id="performanceChart"></canvas> 
+      </div>
+    </div>
+    <div id="efficiency-card" class="metric-card" style="flex: 1; min-width: 200px; background: linear-gradient(135deg, #0f172a, #334155); border: 2px solid var(--color-accent);">
+      <h3 class="metric-title">Eficiencia Turno</h3>
+      <div class="metric-value"><span id="efficiencyValue">0</span> <span class="metric-unit">Ton/h</span></div>
+      <div class="metric-unit" style="margin-top: 10px; opacity: 0.7;">Promedio Real</div>
+    </div>
+  </div>
 
   <div class="main-chart-wrapper" style="margin-top: 20px;">
     <h2 class="chart-title">Monitor de Consumo en Tiempo Real</h2>

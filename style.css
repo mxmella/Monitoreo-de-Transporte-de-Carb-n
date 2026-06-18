@@ -494,6 +494,9 @@
     @keyframes fadeOut {
       to { opacity: 0; transform: translateY(10px); }
     }
+    .toast.fade-out {
+      animation: fadeOut 0.5s ease-out forwards;
+    }
 
     /* Layout Grid */
     .main-header {
@@ -539,16 +542,12 @@
       align-items: center;
     }
     body.dark-mode .main-header {
-       background: rgba(255, 255, 255, 0.95); /* Fondo blanco translúcido */
-      border-bottom: 1px solid #e5e7eb; /* Borde gris claro */
-      box-shadow: 0 4px 20px rgba(0,0,0,0.1); /* Sombra más notoria */
+      background: rgba(30, 41, 59, 0.85); /* Usar color de superficie oscuro */
+      border-color: #334155;
     }
     /* Ajustes para texto y elementos dentro del header en modo oscuro con fondo blanco */
     body.dark-mode .main-header h1 {
-      color: var(--color-primary);
-    }
-    body.dark-mode .main-header .header-clock {
-      color: var(--color-text-light);
+      color: var(--color-text-dark);
     }
     body.dark-mode .main-header #connectionStatus {
       background-color: #f3f4f6; /* Fondo gris muy claro */

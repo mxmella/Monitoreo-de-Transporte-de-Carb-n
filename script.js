@@ -95,7 +95,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let isBeltRunning = null; // null: desconocido, true: operando, false: detenida
   const MAX_BELT_CAPACITY = 2000; // Capacidad máxima de diseño de la cinta
   let lastStopTime = null;
-  let shiftDowntimeMs = 0;
+  let currentShiftTotal = 0;
+  let currentWorkingHours = 0;
+  let currentWorkingMinutes = 0;
+  let performanceChart = null;
 
   // Optimización: Manejo de reconexión al volver a la pestaña
   document.addEventListener('visibilitychange', () => {
@@ -143,18 +146,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // Inicialización de datos vacíos para mostrar grilla al inicio
   const initLabels = [];
   const initData1 = [];
-  const initData2 = [];
   const nowInit = new Date();
   for(let i=19; i>=0; i--) {
     initLabels.push(new Date(nowInit.getTime() - i*2000).toLocaleTimeString());
     initData1.push(null);
-    initData2.push(null);
   }
 
   const data = {
     labels: initLabels, 
     datasets: [{
-      label: 'Flujo de Carbón (Ton/h)', 
+      label: 'Flujo Cinta 1 (Ton/h)', 
       data: initData1,
       borderColor: '#475569',
       backgroundColor: gradientCGE,
@@ -164,19 +165,7 @@ document.addEventListener('DOMContentLoaded', () => {
       pointHoverRadius: 7,
       borderWidth: 3,
       hoverBorderWidth: 4
-    }, {
-      label: 'Carga Lineal (kg/m)', 
-      data: initData2,
-      borderColor: '#f59e0b',
-      backgroundColor: gradientSecondary,
-      fill: true,
-      tension: 0.3,
-      pointRadius: 0,
-      pointHoverRadius: 7,
-      borderWidth: 3,
-      hoverBorderWidth: 4
-    }
-  ]
+    }]
   };
 
   const config = {
@@ -190,18 +179,20 @@ document.addEventListener('DOMContentLoaded', () => {
         legend: {
           labels: { color: getComputedStyle(document.body).getPropertyValue('--color-primary').trim() || '#0a3d66', font: { size: 16, weight: 'bold' } }
         },
+        zoom: {
+          pan: {
+            enabled: true,
+            mode: 'x'
+          },
+          zoom: { 
+            enabled: true, 
+            mode: 'x' 
+          }
+        },
         tooltip: {
           mode: 'index',
           intersect: false,
           backgroundColor: '#0a72c1',
-          // Add zoom plugin options
-          zoom: {
-            pan: {
-              enabled: true,
-              mode: 'x'
-            },
-            zoom: { enabled: true, mode: 'x' }
-          },
           titleFont: { size: 16, weight: 'bold' },
           bodyFont: { size: 14 }
         },
@@ -228,6 +219,52 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   const myChart = new Chart(ctx, config);
   
+  // Inicialización del Gráfico de Rendimiento (Total vs Horas)
+  const perfCanvas = document.getElementById('performanceChart');
+  if (perfCanvas) {
+    performanceChart = new Chart(perfCanvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: ['Estado del Turno'],
+        datasets: [
+          {
+            label: 'Producción (Ton)',
+            data: [0],
+            backgroundColor: '#ea580c',
+            yAxisID: 'yTon',
+            borderRadius: 8
+          },
+          {
+            label: 'Tiempo (Hrs)',
+            data: [0],
+            backgroundColor: '#334155',
+            yAxisID: 'yHours',
+            borderRadius: 8
+          }
+        ]
+      },
+      options: {
+        maintainAspectRatio: false,
+        responsive: true,
+        scales: {
+          yTon: {
+            type: 'linear',
+            position: 'left',
+            title: { display: true, text: 'Toneladas', font: { weight: 'bold' } },
+            beginAtZero: true
+          },
+          yHours: {
+            type: 'linear',
+            position: 'right',
+            title: { display: true, text: 'Horas Decimales', font: { weight: 'bold' } },
+            beginAtZero: true,
+            grid: { drawOnChartArea: false }
+          }
+        }
+      }
+    });
+  }
+
   // Optimización: Throttle para actualizaciones del gráfico principal
   let myChartUpdatePending = false;
   const requestMyChartUpdate = () => {
@@ -262,12 +299,6 @@ document.addEventListener('DOMContentLoaded', () => {
    * @param {number} value - Valor actual del flujo en Ton/h
    */
   function updateBeltUI(value) {
-    // Asegurar que los contenedores de simulación/datos se vean
-    const downtimeLoader = document.getElementById('downtimeLoader');
-    const downtimeContent = document.getElementById('downtimeContent');
-    if(downtimeLoader) downtimeLoader.style.display = 'none';
-    if(downtimeContent) downtimeContent.style.display = 'block';
-    
     // 1. Actualizar Valor Numérico Principal
     const topic1ValueEl = document.getElementById('topic1Value');
     if (topic1ValueEl) topic1ValueEl.textContent = Math.round(value);
@@ -304,15 +335,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!currentlyRunning) {
         lastStopTime = Date.now();
         addEventLog("Cinta inicialmente detenida. Iniciando registro de tiempo muerto.", false);
-        if(downtimeCell) downtimeCell.classList.add('downtime-active');
       } else {
         addEventLog("Cinta inicialmente operando.", true);
       }
       return; // Exit after initial state setup
     }
 
-    const downtimeCell = document.getElementById('downtime-cell');
-    
     if (isBeltRunning === null) {
       isBeltRunning = currentlyRunning;
       if (!currentlyRunning) lastStopTime = Date.now();
@@ -321,15 +349,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (currentlyRunning) {
         // Reanudación: Calcular cuánto duró la parada
         const stopDurationMs = now - lastStopTime;
-        shiftDowntimeMs += stopDurationMs;
         addEventLog(`Cinta reanudada. Parada duró: ${formatDuration(stopDurationMs)}`, true);
         lastStopTime = null;
-        if(downtimeCell) downtimeCell.classList.remove('downtime-active');
       } else {
         // Detención: Iniciar cronómetro de parada
         lastStopTime = now;
         addEventLog("Cinta detenida. Iniciando registro de tiempo muerto.", false);
-        if(downtimeCell) downtimeCell.classList.add('downtime-active');
       }
       isBeltRunning = currentlyRunning;
     }
@@ -345,19 +370,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const s = totalSeconds % 60;
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
-
-  // Intervalo para actualizar el cronómetro de tiempo muerto en vivo
-  setInterval(() => {
-    const downtimeEl = document.getElementById('downtimeValue');
-    if (!downtimeEl) return;
-
-    let totalToShow = shiftDowntimeMs;
-    // Si la cinta está parada actualmente, sumar el tiempo que lleva detenida
-    if (!isBeltRunning && lastStopTime) {
-      totalToShow += (Date.now() - lastStopTime);
-    }
-    downtimeEl.textContent = formatDuration(totalToShow);
-  }, 1000);
 
   /**
    * Agrega una entrada al log de eventos industrial.
@@ -383,6 +395,23 @@ document.addEventListener('DOMContentLoaded', () => {
     while (logBody.children.length > 30) logBody.lastElementChild.remove();
   }
 
+  /**
+   * Exporta el contenido del log de eventos a un archivo .txt.
+   */
+  window.exportEventLog = () => {
+    const logBody = document.getElementById('eventLogBody');
+    if(!logBody) return;
+    const text = Array.from(logBody.children).map(el => el.innerText.replace(/\t/g, ' ')).join('\n');
+    const blob = new Blob([`LOG DE EVENTOS - TRANSPORTE CARBÓN\nGenerado: ${new Date().toLocaleString()}\n\n${text}`], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `log_cinta_${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("Historial de eventos exportado", "success");
+  };
+
    // Suscripción al topic
   client.on('connect', () => {
     console.log('Conectado al broker MQTT');
@@ -393,11 +422,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if(statusEl) statusEl.className = 'status-connected';
 
     lastDataTime = Date.now();
-    client.subscribe('Flujo_CT_1'); // Cambiado de FLUJO_CINTA a Flujo_CT_1
-    client.subscribe('TOTAL_ACUMULADO');
-    client.subscribe('VELOCIDAD_CINTA');
+    client.subscribe('Flujo_CT_1');
     client.subscribe('TOTALIZADOR');
     client.subscribe('TOTALIZADOR_TURNO');
+    client.subscribe('PERMISIVO_COLBUN_STATUS');
+    client.subscribe('HORAS_TRABAJADAS');
+    client.subscribe('MINUTOS_TRABAJADOS');
     client.subscribe('CINTA_0_STATUS');
     client.subscribe('CINTA_1_STATUS');
     client.subscribe('CINTA_2_STATUS');
@@ -449,13 +479,18 @@ document.addEventListener('DOMContentLoaded', () => {
       const id = parseInt(hopperMatch[1], 10).toString();
       updateItemStatusIndicator('tolva', id, statusValue);
       return;
+    } else if (topic === 'PERMISIVO_COLBUN_STATUS') {
+      const statusValue = message.toString().toLowerCase() === 'true';
+      // Usamos 'permisivo' como tipo y 'colbun' como ID para la función genérica
+      updateItemStatusIndicator('permisivo', 'colbun', statusValue);
+      return;
     }
 
     const value = parseFloat(message.toString());
     if (isNaN(value)) { return; }
 
     switch (topic) {
-      case 'Flujo_CT_1': { // Cambiado de FLUJO_CINTA a Flujo_CT_1
+      case 'Flujo_CT_1': {
         const topic1Loader = document.getElementById('topic1Loader');
         const topic1Content = document.getElementById('topic1Content');
 
@@ -479,38 +514,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const now = new Date();
         const timeLabel = now.toLocaleTimeString();
 
-        // Update chart data
+        // Actualizar datos del gráfico
         data.labels.push(timeLabel);
         data.datasets[0].data.push(value);
-        data.datasets[1].data.push(NaN); // Linear Load is updated by TOTAL_ACUMULADO
 
         const MAX_CHART_DATA_POINTS = 20; // Define as a constant
         while (data.labels.length > MAX_CHART_DATA_POINTS) {
           data.labels.shift();
           data.datasets[0].data.shift();
-          data.datasets[1].data.shift();
         }
 
-        const chartLoader = document.getElementById('myChartLoader');
-        if (chartLoader) chartLoader.style.display = 'none';
-        requestMyChartUpdate();
-        break;
-      }
-
-      case 'TOTAL_ACUMULADO': {
-        const topic2El = document.getElementById('topic2');
-        const loader2 = document.getElementById('topic2Loader');
-        const content2 = document.getElementById('topic2Content');
-
-        if(topic2El) topic2El.innerHTML = `${Math.round(value)} <span class="metric-unit">Ton</span>`;
-        if(loader2) loader2.style.display = 'none';
-        if(content2) content2.style.display = 'block';
-        
-        // Update the second dataset (Carga Lineal) with the accumulated total
-        const lastDataIndex = data.datasets[1].data.length - 1;
-        if (lastDataIndex >= 0) {
-          data.datasets[1].data[lastDataIndex] = value;
-        }
         const chartLoader = document.getElementById('myChartLoader');
         if (chartLoader) chartLoader.style.display = 'none';
         requestMyChartUpdate();
@@ -536,43 +549,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (lastPeakValueEl) lastPeakValueEl.innerHTML = `${Math.round(value)} <span class="metric-unit">Ton</span>`;
         if (lastPeakDateEl) lastPeakDateEl.textContent = `Actualizado: ${new Date().toLocaleTimeString()}`;
+        currentShiftTotal = value;
         if (loader) loader.style.display = 'none';
         if (content) content.style.display = 'block';
+        updatePerformanceChart();
+        break;
+      }
+
+      case 'HORAS_TRABAJADAS': {
+        currentWorkingHours = Math.round(value);
+        updateWorkingHoursUI();
+        break;
+      }
+      case 'MINUTOS_TRABAJADOS': {
+        currentWorkingMinutes = Math.round(value);
+        updateWorkingHoursUI();
         break;
       }
     } // End of switch
-    
-    if (topic === 'VELOCIDAD_CINTA') {
-      const velocidadCintaValueEl = document.getElementById('velocidadCintaValue');
-      if(velocidadCintaValueEl) velocidadCintaValueEl.innerHTML = `${value.toFixed(1)} <span class="metric-unit">m/s</span>`;
-
-      const knots = (value * 1.94384).toFixed(2);
-      const kmh = (value * 3.6).toFixed(2);
-      const velocidadCintaDetailsEl = document.getElementById('velocidadCintaDetails');
-      const loader8 = document.getElementById('topic8Loader');
-      const content8 = document.getElementById('topic8Content');
-
-      if(velocidadCintaDetailsEl) velocidadCintaDetailsEl.innerHTML = `${knots} <span class="metric-unit">Nudos</span> | ${kmh} <span class="metric-unit">km/h</span>`;
-      if(loader8) loader8.style.display = 'none';
-      if(content8) content8.style.display = 'block';
-
-      const cell = document.getElementById('topic8-cell');
-      if(!cell) return;
-      // Dynamic styling based on wind speed (value)
-      if (value >= 25) { // Critical wind speed
-        cell.style.backgroundColor = '#dc3545'; // Red
-        cell.style.color = '#fff';
-      } else if (value >= 20) { // High wind speed
-        cell.style.backgroundColor = '#fd7e14'; // Orange
-        cell.style.color = '#fff';
-      } else if (value >= 18) { // Moderate wind speed
-        cell.style.backgroundColor = '#ffc107'; // Yellow
-        cell.style.color = '#333';
-      } else { // Normal wind speed
-        cell.style.backgroundColor = '#28a745'; // Green
-        cell.style.color = '#fff';
-      }
-    }
   });
 
   /**
@@ -593,6 +587,46 @@ document.addEventListener('DOMContentLoaded', () => {
         indicatorEl.className = 'status-indicator status-stopped';
         textEl.textContent = 'Detenida';
       }
+    }
+  }
+
+  /**
+   * Actualiza la interfaz de Horas Trabajadas combinando horas y minutos.
+   */
+  function updateWorkingHoursUI() {
+    const loader = document.getElementById('workingHoursLoader');
+    const content = document.getElementById('workingHoursContent');
+    const valueEl = document.getElementById('workingHoursValue');
+
+    if(loader) loader.style.display = 'none';
+    if(content) content.style.display = 'block';
+
+    if(valueEl) {
+      const h = currentWorkingHours.toString().padStart(2, '0');
+      const m = currentWorkingMinutes.toString().padStart(2, '0');
+      valueEl.textContent = `${h}:${m}`;
+      updatePerformanceChart();
+    }
+  }
+
+  /**
+   * Actualiza el gráfico de barras comparativo y la tarjeta de eficiencia.
+   */
+  function updatePerformanceChart() {
+    if (!performanceChart) return;
+    
+    const decimalHours = currentWorkingHours + (currentWorkingMinutes / 60);
+    
+    // Actualizar Gráfico
+    performanceChart.data.datasets[0].data[0] = Math.round(currentShiftTotal);
+    performanceChart.data.datasets[1].data[0] = parseFloat(decimalHours.toFixed(2));
+    performanceChart.update();
+
+    // Actualizar Tarjeta de Eficiencia (Ton / Hora)
+    const efficiencyValueEl = document.getElementById('efficiencyValue');
+    if (efficiencyValueEl) {
+      const efficiency = decimalHours > 0 ? (currentShiftTotal / decimalHours) : 0;
+      efficiencyValueEl.textContent = Math.round(efficiency);
     }
   }
 
