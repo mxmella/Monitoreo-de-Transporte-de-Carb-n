@@ -1,0 +1,608 @@
+document.addEventListener('DOMContentLoaded', () => {
+  // Declare global variables used in the script
+  
+  // Lógica de Pantalla de Carga
+  const loader = document.getElementById('app-loader');
+  if (loader) {
+    // Mantenemos el loader visible por al menos 2.5 segundos para dar tiempo a la conexión
+    setTimeout(() => {
+      loader.classList.add('loader-hidden');
+      // Remover del DOM después de la transición CSS
+      setTimeout(() => {
+        loader.style.display = 'none';
+      }, 600);
+    }, 2500);
+  }
+
+  // Variables para modo oscuro persistente
+  const bodyEl = document.body;
+  const darkToggle = document.getElementById('darkModeToggle');
+  const savedTheme = localStorage.getItem('theme');
+  if(savedTheme === 'dark') {
+   bodyEl.classList.add('dark-mode');
+    if(darkToggle) darkToggle.textContent = 'Modo claro';
+  }
+
+  if(darkToggle) {
+    darkToggle.addEventListener('click', () => {
+      bodyEl.classList.toggle('dark-mode');
+      if(bodyEl.classList.contains('dark-mode')) {
+        darkToggle.textContent = 'Modo claro';
+        localStorage.setItem('theme', 'dark');
+      } else {
+        darkToggle.textContent = 'Modo oscuro';
+        localStorage.setItem('theme', 'light');
+      }
+    });
+  }
+
+  // --- Toast Notification Function ---
+  function showToast(message, type = 'info', duration = 3000) {
+    const toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+
+    toastContainer.appendChild(toast);
+
+    setTimeout(() => {
+      toast.classList.add('fade-out');
+      toast.addEventListener('animationend', () => {
+        toast.remove();
+      });
+    }, duration);
+  }
+  window.showToast = showToast; // Make it globally accessible if needed by inline handlers
+
+  // Botón para generar informe (Imprimir / PDF)
+  const reportBtn = document.getElementById('reportBtn');
+  if(reportBtn) {
+    reportBtn.addEventListener('click', () => {
+      showToast("Generando informe para impresión...", "info");
+      
+      // Agregar fecha y hora al reporte
+      const tsEl = document.getElementById('reportTimestamp');
+      if(tsEl) tsEl.textContent = `Generado el: ${new Date().toLocaleString()}`;
+
+      // Imprimir y luego restaurar
+      setTimeout(() => {
+        window.print();
+      }, 500);
+    });
+  }
+
+  // MQTT y Chart.js con Zoom plugin
+  const MQTT_BROKER_URL = 'wss://mqtt-dashboard.com:8884/mqtt';
+  const mqttOptions = {
+    keepalive: 60,
+    reconnectPeriod: 1000,
+    clean: true
+  };
+  const client = mqtt.connect(MQTT_BROKER_URL, mqttOptions);
+  const myChartCanvas = document.getElementById('myChart');
+  const ctx = myChartCanvas ? myChartCanvas.getContext('2d') : null;
+
+  if (!ctx) { console.error("Canvas for myChart not found!"); return; }
+  
+  // Variables para Watchdog (Monitor de flujo de datos)
+  let lastDataTime = Date.now();
+  const DATA_TIMEOUT = 15000; // 15 segundos sin datos = alerta
+
+  // Variables de estado del sistema de transporte
+  let lastFlowValue = 0;
+  let isBeltRunning = null; // null: desconocido, true: operando, false: detenida
+  const MAX_BELT_CAPACITY = 2000; // Capacidad máxima de diseño de la cinta
+  let lastStopTime = null;
+  let shiftDowntimeMs = 0;
+
+  // Optimización: Manejo de reconexión al volver a la pestaña
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      lastDataTime = Date.now(); // Resetear watchdog para evitar falsa alarma
+      if (client && !client.connected && typeof client.reconnect === 'function') {
+        console.log('Pestaña visible: Forzando reconexión...');
+        client.reconnect();
+      }
+    }
+  });
+
+  // Verificar flujo de datos periódicamente
+  setInterval(() => {
+    if (document.hidden) return; // No verificar en segundo plano para evitar falsos positivos
+    
+    const statusEl = document.getElementById('connectionStatus');
+    const textEl = document.getElementById('connText');
+    
+    // Solo si el cliente MQTT está conectado, verificamos si llegan datos
+    if (client && client.connected) {
+      if (Date.now() - lastDataTime > DATA_TIMEOUT) {
+        if (statusEl) statusEl.className = 'status-warning';
+        if (textEl) textEl.textContent = 'Sin flujo de datos';
+      } else if (statusEl && textEl) {
+        // Only change back to connected if it was previously a warning
+        if (statusEl.classList.contains('status-warning')) {
+          statusEl.className = 'status-connected';
+          textEl.textContent = 'Conectado';
+        }
+      }
+    }
+  }, 2000);
+
+  // Chart.js setup
+  // Crear degradados para el gráfico principal
+  const gradientCGE = ctx.createLinearGradient(0, 0, 0, 400);
+  gradientCGE.addColorStop(0, 'rgba(71, 85, 105, 0.6)');
+  gradientCGE.addColorStop(1, 'rgba(71, 85, 105, 0.05)');
+
+  const gradientSecondary = ctx.createLinearGradient(0, 0, 0, 400);
+  gradientSecondary.addColorStop(0, 'rgba(245, 158, 11, 0.6)');
+  gradientSecondary.addColorStop(1, 'rgba(245, 158, 11, 0.05)');
+
+  // Inicialización de datos vacíos para mostrar grilla al inicio
+  const initLabels = [];
+  const initData1 = [];
+  const initData2 = [];
+  const nowInit = new Date();
+  for(let i=19; i>=0; i--) {
+    initLabels.push(new Date(nowInit.getTime() - i*2000).toLocaleTimeString());
+    initData1.push(null);
+    initData2.push(null);
+  }
+
+  const data = {
+    labels: initLabels, 
+    datasets: [{
+      label: 'Flujo de Carbón (Ton/h)', 
+      data: initData1,
+      borderColor: '#475569',
+      backgroundColor: gradientCGE,
+      fill: true,
+      tension: 0.3,
+      pointRadius: 0,
+      pointHoverRadius: 7,
+      borderWidth: 3,
+      hoverBorderWidth: 4
+    }, {
+      label: 'Carga Lineal (kg/m)', 
+      data: initData2,
+      borderColor: '#f59e0b',
+      backgroundColor: gradientSecondary,
+      fill: true,
+      tension: 0.3,
+      pointRadius: 0,
+      pointHoverRadius: 7,
+      borderWidth: 3,
+      hoverBorderWidth: 4
+    }
+  ]
+  };
+
+  const config = {
+    type: 'line',
+    data,
+    options: {
+      maintainAspectRatio: false,
+      animation: false,
+      responsive: true,
+      plugins: {
+        legend: {
+          labels: { color: getComputedStyle(document.body).getPropertyValue('--color-primary').trim() || '#0a3d66', font: { size: 16, weight: 'bold' } }
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          backgroundColor: '#0a72c1',
+          // Add zoom plugin options
+          zoom: {
+            pan: {
+              enabled: true,
+              mode: 'x'
+            },
+            zoom: { enabled: true, mode: 'x' }
+          },
+          titleFont: { size: 16, weight: 'bold' },
+          bodyFont: { size: 14 }
+        },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Tiempo de Descarga', color: getComputedStyle(document.body).getPropertyValue('--color-primary').trim() || '#0a3d66', font: { size: 18, weight: 'bold' } },
+          ticks: { color: getComputedStyle(document.body).getPropertyValue('--color-primary').trim() || '#0a3d66', maxRotation: 45, minRotation: 30 },
+          grid: { color: 'rgba(10, 61, 102, 0.08)', borderDash: [5, 5] }
+        },
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: 'Tonelaje / Hora', color: getComputedStyle(document.body).getPropertyValue('--color-primary').trim() || '#0a3d66', font: { size: 18, weight: 'bold' } },
+          ticks: { color: getComputedStyle(document.body).getPropertyValue('--color-primary').trim() || '#0a3d66' },
+          grid: { color: 'rgba(10, 61, 102, 0.08)', borderDash: [5, 5] }
+        }
+      },
+      interaction: {
+        mode: 'nearest',
+        axis: 'x',
+        intersect: false
+      }
+    }
+  };
+  const myChart = new Chart(ctx, config);
+  
+  // Optimización: Throttle para actualizaciones del gráfico principal
+  let myChartUpdatePending = false;
+  const requestMyChartUpdate = () => {
+    if (!myChartUpdatePending) {
+      myChartUpdatePending = true;
+      requestAnimationFrame(() => {
+        myChart.update();
+        myChartUpdatePending = false;
+      });
+    }
+  };
+  
+  // Alertas
+  const alertContainer = document.getElementById('alertContainer');
+  let alertActive = false;
+
+  function showVisualAlert(value) {
+    if(alertContainer) {
+      alertContainer.style.display = 'block';
+      alertContainer.textContent = `⚠️ Alerta: Valor alto detectado! Valor actual: ${value.toFixed(2)}`;
+
+      setTimeout(() => {
+        if(alertActive) return;
+        alertContainer.style.display = 'none';
+      }, 5000);
+    }
+  }
+
+
+  /**
+   * Centraliza la actualización de la interfaz relacionada con el flujo de la cinta.
+   * @param {number} value - Valor actual del flujo en Ton/h
+   */
+  function updateBeltUI(value) {
+    // Asegurar que los contenedores de simulación/datos se vean
+    const downtimeLoader = document.getElementById('downtimeLoader');
+    const downtimeContent = document.getElementById('downtimeContent');
+    if(downtimeLoader) downtimeLoader.style.display = 'none';
+    if(downtimeContent) downtimeContent.style.display = 'block';
+    
+    // 1. Actualizar Valor Numérico Principal
+    const topic1ValueEl = document.getElementById('topic1Value');
+    if (topic1ValueEl) topic1ValueEl.textContent = Math.round(value);
+
+    // 2. Actualizar Indicador de Tendencia
+    const trendEl = document.getElementById('flowTrend');
+    if (trendEl) {
+      if (value > lastFlowValue + 5) {
+        trendEl.innerHTML = '▲'; trendEl.className = 'trend-indicator trend-up';
+      } else if (value < lastFlowValue - 5) {
+        trendEl.innerHTML = '▼'; trendEl.className = 'trend-indicator trend-down';
+      } else {
+        trendEl.innerHTML = '●'; trendEl.className = 'trend-indicator trend-stable';
+      }
+    }
+    lastFlowValue = value;
+
+    // 3. Actualizar Barra de Capacidad
+    const capBar = document.getElementById('capacityBar');
+    if (capBar) {
+      const percent = Math.min((value / MAX_BELT_CAPACITY) * 100, 100);
+      capBar.style.width = `${percent}%`;
+      capBar.style.background = percent > 90 ? '#ef4444' : 'var(--color-accent)';
+      const capPercentEl = document.getElementById('capacityPercent');
+      if(capPercentEl) capPercentEl.textContent = `(${Math.round(percent)}%)`;
+    }
+
+    // 4. Log de Eventos (Detección de estado)
+    const currentlyRunning = value > 50;
+    
+    // Initial state check
+    if (isBeltRunning === null) {
+      isBeltRunning = currentlyRunning;
+      if (!currentlyRunning) {
+        lastStopTime = Date.now();
+        addEventLog("Cinta inicialmente detenida. Iniciando registro de tiempo muerto.", false);
+        if(downtimeCell) downtimeCell.classList.add('downtime-active');
+      } else {
+        addEventLog("Cinta inicialmente operando.", true);
+      }
+      return; // Exit after initial state setup
+    }
+
+    const downtimeCell = document.getElementById('downtime-cell');
+    
+    if (isBeltRunning === null) {
+      isBeltRunning = currentlyRunning;
+      if (!currentlyRunning) lastStopTime = Date.now();
+    } else if (currentlyRunning !== isBeltRunning) {
+      const now = Date.now();
+      if (currentlyRunning) {
+        // Reanudación: Calcular cuánto duró la parada
+        const stopDurationMs = now - lastStopTime;
+        shiftDowntimeMs += stopDurationMs;
+        addEventLog(`Cinta reanudada. Parada duró: ${formatDuration(stopDurationMs)}`, true);
+        lastStopTime = null;
+        if(downtimeCell) downtimeCell.classList.remove('downtime-active');
+      } else {
+        // Detención: Iniciar cronómetro de parada
+        lastStopTime = now;
+        addEventLog("Cinta detenida. Iniciando registro de tiempo muerto.", false);
+        if(downtimeCell) downtimeCell.classList.add('downtime-active');
+      }
+      isBeltRunning = currentlyRunning;
+    }
+  }
+
+  /**
+   * Formatea milisegundos a HH:MM:SS
+   */
+  function formatDuration(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
+
+  // Intervalo para actualizar el cronómetro de tiempo muerto en vivo
+  setInterval(() => {
+    const downtimeEl = document.getElementById('downtimeValue');
+    if (!downtimeEl) return;
+
+    let totalToShow = shiftDowntimeMs;
+    // Si la cinta está parada actualmente, sumar el tiempo que lleva detenida
+    if (!isBeltRunning && lastStopTime) {
+      totalToShow += (Date.now() - lastStopTime);
+    }
+    downtimeEl.textContent = formatDuration(totalToShow);
+  }, 1000);
+
+  /**
+   * Agrega una entrada al log de eventos industrial.
+   */
+  function addEventLog(message, isStart) {
+    const logBody = document.getElementById('eventLogBody');
+    if (!logBody) return;
+
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    
+    const statusClass = isStart ? 'log-start' : 'log-stop';
+    const statusText = isStart ? '[ARRANQUE]' : '[PARADA]';
+
+    entry.innerHTML = `
+      <span class="log-time">${timeStr}</span>
+      <span class="log-msg"><span class="${statusClass}">${statusText}</span> ${message}</span>
+    `;
+
+    logBody.prepend(entry);
+    while (logBody.children.length > 30) logBody.lastElementChild.remove();
+  }
+
+   // Suscripción al topic
+  client.on('connect', () => {
+    console.log('Conectado al broker MQTT');
+    showToast("Conectado al servidor de datos", "success");
+    const textEl = document.getElementById('connText');
+    const statusEl = document.getElementById('connectionStatus');
+    if(textEl) textEl.textContent = 'Conectado';
+    if(statusEl) statusEl.className = 'status-connected';
+
+    lastDataTime = Date.now();
+    client.subscribe('Flujo_CT_1'); // Cambiado de FLUJO_CINTA a Flujo_CT_1
+    client.subscribe('TOTAL_ACUMULADO');
+    client.subscribe('VELOCIDAD_CINTA');
+    client.subscribe('TOTALIZADOR');
+    client.subscribe('TOTALIZADOR_TURNO');
+    client.subscribe('CINTA_0_STATUS');
+    client.subscribe('CINTA_1_STATUS');
+    client.subscribe('CINTA_2_STATUS');
+    client.subscribe('CINTA_3_STATUS');
+    client.subscribe('CINTA_4_STATUS');
+    client.subscribe('AV_01_Run');
+    client.subscribe('AV_02_Run');
+    client.subscribe('AV_03_Run');
+    client.subscribe('AV_04_Run');
+  });
+   
+  client.on('reconnect', () => {
+    const textEl = document.getElementById('connText');
+    const statusEl = document.getElementById('connectionStatus');
+    if(textEl) textEl.textContent = 'Reconectando...';
+    if(statusEl) statusEl.className = 'status-reconnecting';
+  });
+
+  client.on('close', () => {
+    const textEl = document.getElementById('connText');
+    const statusEl = document.getElementById('connectionStatus');
+    if(textEl) textEl.textContent = 'Desconectado';
+    if(statusEl) statusEl.className = 'status-disconnected';
+  });
+
+  client.on('error', (err) => {
+    console.error('Error MQTT:', err);
+    showToast("Error de conexión MQTT", "error");
+    const textEl = document.getElementById('connText');
+    const statusEl = document.getElementById('connectionStatus');
+    if(textEl) textEl.textContent = 'Error de conexión';
+    if(statusEl) statusEl.className = 'status-disconnected';
+  });
+
+  client.on('message', (topic, message) => {
+    lastDataTime = Date.now();
+
+    // Manejo especial para topics de estado (true/false)
+    const beltMatch = topic.match(/CINTA_(\d+)_STATUS/);
+    const hopperMatch = topic.match(/AV_(\d+)_Run/);
+
+    if (beltMatch) {
+      const statusValue = message.toString().toLowerCase() === 'true';
+      updateItemStatusIndicator('cinta', beltMatch[1], statusValue);
+      return;
+    } else if (hopperMatch) {
+      const statusValue = message.toString().toLowerCase() === 'true';
+      // Convertimos "01" a "1" para que coincida con el ID del HTML
+      const id = parseInt(hopperMatch[1], 10).toString();
+      updateItemStatusIndicator('tolva', id, statusValue);
+      return;
+    }
+
+    const value = parseFloat(message.toString());
+    if (isNaN(value)) { return; }
+
+    switch (topic) {
+      case 'Flujo_CT_1': { // Cambiado de FLUJO_CINTA a Flujo_CT_1
+        const topic1Loader = document.getElementById('topic1Loader');
+        const topic1Content = document.getElementById('topic1Content');
+
+        if(topic1Loader) topic1Loader.style.display = 'none';
+        if(topic1Content) topic1Content.style.display = 'block';
+        
+        updateBeltUI(value); // This function handles its own UI updates
+
+        // Alert logic
+        const ALERT_THRESHOLD = 120; // Define as a constant
+        if(value > ALERT_THRESHOLD) {
+          if (!alertActive) { // Activate alert only if not already active
+            alertActive = true; // Set flag to prevent repeated alerts
+            showVisualAlert(value);
+          }
+        } else {
+          alertActive = false; // Deactivate alert
+          if(alertContainer) alertContainer.style.display = 'none'; // Hide alert message
+        }
+
+        const now = new Date();
+        const timeLabel = now.toLocaleTimeString();
+
+        // Update chart data
+        data.labels.push(timeLabel);
+        data.datasets[0].data.push(value);
+        data.datasets[1].data.push(NaN); // Linear Load is updated by TOTAL_ACUMULADO
+
+        const MAX_CHART_DATA_POINTS = 20; // Define as a constant
+        while (data.labels.length > MAX_CHART_DATA_POINTS) {
+          data.labels.shift();
+          data.datasets[0].data.shift();
+          data.datasets[1].data.shift();
+        }
+
+        const chartLoader = document.getElementById('myChartLoader');
+        if (chartLoader) chartLoader.style.display = 'none';
+        requestMyChartUpdate();
+        break;
+      }
+
+      case 'TOTAL_ACUMULADO': {
+        const topic2El = document.getElementById('topic2');
+        const loader2 = document.getElementById('topic2Loader');
+        const content2 = document.getElementById('topic2Content');
+
+        if(topic2El) topic2El.innerHTML = `${Math.round(value)} <span class="metric-unit">Ton</span>`;
+        if(loader2) loader2.style.display = 'none';
+        if(content2) content2.style.display = 'block';
+        
+        // Update the second dataset (Carga Lineal) with the accumulated total
+        const lastDataIndex = data.datasets[1].data.length - 1;
+        if (lastDataIndex >= 0) {
+          data.datasets[1].data[lastDataIndex] = value;
+        }
+        const chartLoader = document.getElementById('myChartLoader');
+        if (chartLoader) chartLoader.style.display = 'none';
+        requestMyChartUpdate();
+        break;
+      }
+
+      case 'TOTALIZADOR': {
+        const topic3El = document.getElementById('topic3');
+        const loader3 = document.getElementById('topic3Loader');
+        const content3 = document.getElementById('topic3Content');
+
+        if (topic3El) topic3El.innerHTML = `${Math.round(value)} <span class="metric-unit">Ton</span>`;
+        if (loader3) loader3.style.display = 'none';
+        if (content3) content3.style.display = 'block';
+        break;
+      }
+
+      case 'TOTALIZADOR_TURNO': {
+        const lastPeakValueEl = document.getElementById('lastPeakValue');
+        const lastPeakDateEl = document.getElementById('lastPeakDate');
+        const loader = document.getElementById('lastPeakLoader');
+        const content = document.getElementById('lastPeakContent');
+
+        if (lastPeakValueEl) lastPeakValueEl.innerHTML = `${Math.round(value)} <span class="metric-unit">Ton</span>`;
+        if (lastPeakDateEl) lastPeakDateEl.textContent = `Actualizado: ${new Date().toLocaleTimeString()}`;
+        if (loader) loader.style.display = 'none';
+        if (content) content.style.display = 'block';
+        break;
+      }
+    } // End of switch
+    
+    if (topic === 'VELOCIDAD_CINTA') {
+      const velocidadCintaValueEl = document.getElementById('velocidadCintaValue');
+      if(velocidadCintaValueEl) velocidadCintaValueEl.innerHTML = `${value.toFixed(1)} <span class="metric-unit">m/s</span>`;
+
+      const knots = (value * 1.94384).toFixed(2);
+      const kmh = (value * 3.6).toFixed(2);
+      const velocidadCintaDetailsEl = document.getElementById('velocidadCintaDetails');
+      const loader8 = document.getElementById('topic8Loader');
+      const content8 = document.getElementById('topic8Content');
+
+      if(velocidadCintaDetailsEl) velocidadCintaDetailsEl.innerHTML = `${knots} <span class="metric-unit">Nudos</span> | ${kmh} <span class="metric-unit">km/h</span>`;
+      if(loader8) loader8.style.display = 'none';
+      if(content8) content8.style.display = 'block';
+
+      const cell = document.getElementById('topic8-cell');
+      if(!cell) return;
+      // Dynamic styling based on wind speed (value)
+      if (value >= 25) { // Critical wind speed
+        cell.style.backgroundColor = '#dc3545'; // Red
+        cell.style.color = '#fff';
+      } else if (value >= 20) { // High wind speed
+        cell.style.backgroundColor = '#fd7e14'; // Orange
+        cell.style.color = '#fff';
+      } else if (value >= 18) { // Moderate wind speed
+        cell.style.backgroundColor = '#ffc107'; // Yellow
+        cell.style.color = '#333';
+      } else { // Normal wind speed
+        cell.style.backgroundColor = '#28a745'; // Green
+        cell.style.color = '#fff';
+      }
+    }
+  });
+
+  /**
+   * Actualiza el indicador de estado de una cinta o tolva.
+   * @param {string} type - El tipo de elemento ('cinta' o 'tolva').
+   * @param {string} id - El número identificador.
+   * @param {boolean} isRunning - True si está operando, false si está detenida.
+   */
+  function updateItemStatusIndicator(type, id, isRunning) {
+    const indicatorEl = document.getElementById(`${type}-status-${id}`);
+    const textEl = indicatorEl ? indicatorEl.querySelector('.status-text') : null;
+
+    if (indicatorEl && textEl) {
+      if (isRunning) {
+        indicatorEl.className = 'status-indicator status-running';
+        textEl.textContent = 'Operando';
+      } else {
+        indicatorEl.className = 'status-indicator status-stopped';
+        textEl.textContent = 'Detenida';
+      }
+    }
+  }
+
+  function updateClock() {
+    const now = new Date();
+    const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+    const clockEl = document.getElementById('liveClock');
+    if(clockEl) clockEl.textContent = now.toLocaleDateString('es-ES', options);
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+});
